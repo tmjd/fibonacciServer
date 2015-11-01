@@ -106,10 +106,12 @@ type FibonacciRequestHandler struct {
 // These is our dependency injection for testing
 var timeTriggerDelay = time.After
 var statSelectDone = func() {}
+var logStats = log.Printf
 
 func clearInjectionPoints() {
 	timeTriggerDelay = time.After
 	statSelectDone = func() {}
+	logStats = log.Printf
 }
 
 // Periodically prints out the stats over the last 2 seconds if there are or have
@@ -145,9 +147,11 @@ func (frh *FibonacciRequestHandler) statsMonitor() {
 			}
 		case <-timeTrigger:
 			if state.max_concurrent_requests != 0 {
-				log.Printf("Fibonacci stats: %s", state)
+				logStats("Fibonacci stats: %s", state)
 			}
 			state.clear()
+			// Immediately set the max to the cur_req
+			state.max_concurrent_requests = cur_req
 
 			// Reset the timeTrigger
 			timeTrigger = timeTriggerDelay(printDelay)

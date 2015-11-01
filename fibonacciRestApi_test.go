@@ -2,11 +2,13 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"github.com/tmjd/fibonacci"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGettingIterationCountFromRequest(t *testing.T) {
@@ -191,5 +193,110 @@ func TestFibonacciHandler(t *testing.T) {
 }
 
 func TestStatsMonitor(t *testing.T) {
+	defer clearInjectionPoints()
 
+	frh := NewFibonacciRequestHandler()
+
+	trigger_chan := make(chan time.Time)
+	timeTriggerDelay = func(time.Duration) <-chan time.Time {
+		return trigger_chan
+	}
+
+	selectDone_chan := make(chan bool)
+	statSelectDone = func() {
+		selectDone_chan <- true
+	}
+
+	log_chan := make(chan string)
+	logged := false
+	logStats = func(format string, v ...interface{}) {
+		log_chan <- fmt.Sprintf(format, v)
+		logged = true
+	}
+
+	go frh.statsMonitor()
+
+	frh.activeReq <- 1
+	<-selectDone_chan
+	frh.activeReq <- 1
+	<-selectDone_chan
+	frh.activeReq <- 1
+	<-selectDone_chan
+	trigger_chan <- time.Now()
+	result := <-log_chan
+	<-selectDone_chan
+
+	if !strings.Contains(result, "Requests 3 Concurrent 3") {
+		t.Errorf("Result (%s) did not have expected value 3", result)
+	}
+
+	trigger_chan <- time.Now()
+	result = <-log_chan
+	<-selectDone_chan
+	if !strings.Contains(result, "Requests 0 Concurrent 3") {
+		t.Errorf("Result (%s) should still have expected value 3", result)
+	}
+
+	//Clear out all the 'active' requests
+	frh.activeReq <- -1
+	<-selectDone_chan
+	frh.activeReq <- -1
+	<-selectDone_chan
+	frh.activeReq <- -1
+	<-selectDone_chan
+	trigger_chan <- time.Now()
+	// Let log message happen but we don't care about this one
+	result = <-log_chan
+	<-selectDone_chan
+
+	logged = false
+	trigger_chan <- time.Now()
+	<-selectDone_chan
+	if logged {
+		t.Errorf("Expected nothing to have been logged recieved %s", <-log_chan)
+	}
+
+	// Have an active request so all subsequent time triggers will result in a log message
+	frh.activeReq <- 1
+	<-selectDone_chan
+
+	//reqState: duration, iterations
+	dur, _ := time.ParseDuration("7s")
+	frh.reqStats <- reqStat{dur, 14}
+	<-selectDone_chan
+	trigger_chan <- time.Now()
+	result = <-log_chan
+	<-selectDone_chan
+
+	if strings.Contains(result, "n=14-7s") == false {
+		t.Errorf("After sending a n=14, with a duration of 7s the values were not in the log message %s", result)
+	}
+
+	dur, _ = time.ParseDuration("8s")
+	frh.reqStats <- reqStat{dur, 4}
+	<-selectDone_chan
+	dur, _ = time.ParseDuration("2s")
+	frh.reqStats <- reqStat{dur, 15}
+	<-selectDone_chan
+	trigger_chan <- time.Now()
+	result = <-log_chan
+	<-selectDone_chan
+
+	if strings.Contains(result, "MaxElapse:n=4-8s") == false || strings.Contains(result, "MaxIterations:n=15-2s") == false {
+		t.Errorf("Log message %s did not have expected n=4-8s and n=15-2s", result)
+	}
+
+	dur, _ = time.ParseDuration("8s")
+	frh.reqStats <- reqStat{dur, 4}
+	<-selectDone_chan
+	dur, _ = time.ParseDuration("12s")
+	frh.reqStats <- reqStat{dur, 15}
+	<-selectDone_chan
+	trigger_chan <- time.Now()
+	result = <-log_chan
+	<-selectDone_chan
+
+	if strings.Contains(result, "MaxElapse:n=15-12s") == false {
+		t.Errorf("Log message %s did not have expected n=14-12s", result)
+	}
 }
