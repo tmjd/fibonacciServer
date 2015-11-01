@@ -81,7 +81,8 @@ func TestHandlerValidPostRequestResultsInSuccess(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; param=value")
 
 	res := httptest.NewRecorder()
-	handleFibonacciRequest(res, req)
+	frh := NewFibonacciRequestHandler()
+	frh.FibonacciRequestHandleFunc(res, req)
 
 	if res.Code != 200 {
 		t.Errorf("Expect success from POST command with body: %q", res)
@@ -95,7 +96,8 @@ func TestHandlerPostWithNoBodyResponseFailure(t *testing.T) {
 	}
 
 	res := httptest.NewRecorder()
-	handleFibonacciRequest(res, req)
+	frh := NewFibonacciRequestHandler()
+	frh.FibonacciRequestHandleFunc(res, req)
 
 	if res.Code == 200 {
 		t.Errorf("Expect failure from POST with no body")
@@ -111,7 +113,8 @@ func TestFibonacciHandler(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; param=value")
 
 	res := httptest.NewRecorder()
-	handleFibonacciRequest(res, req)
+	frh := NewFibonacciRequestHandler()
+	frh.FibonacciRequestHandleFunc(res, req)
 
 	if res.Code != 200 {
 		t.Errorf("Expect failure from crafted POST command")

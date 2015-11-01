@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Custom Number to use generating the fibonacci numbers, can swap out
@@ -132,7 +133,99 @@ func buildOutput(in <-chan FibNum) []byte {
 	return output.Bytes()
 }
 
-func handleFibonacciRequest(res http.ResponseWriter, req *http.Request) {
+type reqStat struct {
+	duration   time.Duration
+	iterations int
+}
+
+type FibonacciRequestHandler struct {
+	activeReq chan int
+	reqStats  chan reqStat
+}
+
+func statChanged(cur int64, reported int64) bool {
+
+	return true
+}
+
+type statState struct {
+	max_requests   int
+	max_iterations reqStat
+	max_duration   reqStat
+	min_duration   reqStat
+}
+
+func (ss *statState) clear() {
+	ss.max_requests = 0
+	ss.max_iterations.iterations = 0
+	ss.max_iterations.duration = 0
+	ss.max_duration.iterations = 0
+	ss.max_duration.duration = 0
+	ss.min_duration.iterations = 0
+	ss.min_duration.duration = 0
+}
+
+func (frh *FibonacciRequestHandler) statsMonitor() {
+	req_since_trigger := 0
+	max_req, cur_req, last_max_req := 0, 0, 0
+	max_iter, last_max_iter := 0, 0
+	max_dur := time.Since(time.Now())
+	last_max_dur := max_dur
+	min_dur := time.Since(time.Now().AddDate(-1, -1, -1))
+	last_min_dur := min_dur
+
+	printDelay, _ := time.ParseDuration("2s")
+	timeTrigger := time.After(printDelay)
+	for {
+		select {
+		case req := <-frh.activeReq:
+			cur_req = cur_req + req
+
+			if cur_req == 1 {
+				req_since_trigger = req_since_trigger + 1
+			}
+
+			if cur_req > max_req {
+				max_req = cur_req
+			}
+		case stat := <-frh.reqStats:
+			if max_dur.Nanoseconds() < stat.duration.Nanoseconds() {
+				max_dur = stat.duration
+			}
+			if min_dur.Nanoseconds() > stat.duration.Nanoseconds() {
+				min_dur = stat.duration
+			}
+			if max_iter < stat.iterations {
+				max_iter = stat.iterations
+			}
+		case <-timeTrigger:
+			if max_req != last_max_req || max_iter != last_max_iter || max_dur != last_max_dur || min_dur != last_min_dur {
+				last_max_req, last_max_iter = max_req, max_iter
+				last_max_dur, last_min_dur = max_dur, min_dur
+				log.Printf("Max concur reqs %d; Max iterations %d; Max duration %s; Min duration %s",
+					max_req, max_iter, max_dur, min_dur)
+			}
+			timeTrigger = time.After(printDelay)
+		}
+	}
+}
+
+func NewFibonacciRequestHandler() *FibonacciRequestHandler {
+	var frh FibonacciRequestHandler
+	frh.activeReq = make(chan int, 100)
+	frh.reqStats = make(chan reqStat, 100)
+	return &frh
+}
+
+func (frh *FibonacciRequestHandler) FibonacciRequestHandleFunc(res http.ResponseWriter, req *http.Request) {
+	frh.activeReq <- 1
+	start := time.Now()
+	var stat reqStat
+	defer func() {
+		frh.activeReq <- -1
+		stat.duration = time.Since(start)
+		frh.reqStats <- stat
+	}()
 	if req.Method != "POST" && req.Method != "GET" {
 		respondToUnsupportedMethod(res, req)
 		return
@@ -144,6 +237,7 @@ func handleFibonacciRequest(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	stat.iterations = n
 	fg, err := NewFibonacciGenerator(n)
 	if err != nil {
 		http.Error(res, err.Error(), http.StatusBadRequest)
@@ -164,7 +258,10 @@ func handleFibonacciRequest(res http.ResponseWriter, req *http.Request) {
 func main() {
 
 	sm := http.NewServeMux()
-	sm.HandleFunc("/fibonacci", handleFibonacciRequest)
+	frh := NewFibonacciRequestHandler()
+	sm.HandleFunc("/fibonacci", frh.FibonacciRequestHandleFunc)
+
+	go frh.statsMonitor()
 
 	log.Fatal(http.ListenAndServe(":8080", sm))
 }
