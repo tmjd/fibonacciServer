@@ -10,27 +10,33 @@ import (
 	"strconv"
 )
 
+// Custom Number to use generating the fibonacci numbers, can swap out
+// the underlying type without affecting the algorithm
 type FibNum struct {
 	value big.Int
 }
 
-func NewFibNum(init int64) FibNum {
+func newFibNum(init int64) FibNum {
 	fn := FibNum{}
 	fn.value = *big.NewInt(init)
 	return fn
 }
 
-func CloneFibNum(src FibNum) FibNum {
+// Clone to get copy of a FibNum.
+// With big.Int need to do a new big.NewInt so the FibNum is not using the same
+// big.Int value.
+func cloneFibNum(src FibNum) FibNum {
 	fn := FibNum{}
 	fn.value = *big.NewInt(0)
 	fn.value.Set(&src.value)
 	return fn
 }
 
-func (fn *FibNum) Add(a FibNum, b FibNum) {
+func (fn *FibNum) add(a FibNum, b FibNum) {
 	fn.value.Add(&a.value, &b.value)
 }
 
+// Return string representation of FibNum
 func (fn FibNum) String() string {
 	return fn.value.String()
 }
@@ -43,6 +49,8 @@ func NewFibonacciGenerator(iterations int) (fg *FibonacciGenerator, err error) {
 	if iterations < 0 {
 		return nil, errors.New("Number of iterations cannot be negative")
 	} else if iterations > 100000 {
+		// Seems like an unreasonably high number but I think there should be some
+		// limit to what will be generated
 		return nil, errors.New("Number of iterations cannot be greater than 100000")
 	}
 	fg = &FibonacciGenerator{}
@@ -50,18 +58,18 @@ func NewFibonacciGenerator(iterations int) (fg *FibonacciGenerator, err error) {
 	return fg, nil
 }
 
-func (fg *FibonacciGenerator) fibonacci(out chan<- FibNum) {
+func (fg *FibonacciGenerator) Fibonacci(out chan<- FibNum) {
 	if fg.maxIterations == 0 {
 		return
 	}
 	var v [2]FibNum
-	v[0] = NewFibNum(0)
-	v[1] = NewFibNum(1)
+	v[0] = newFibNum(0)
+	v[1] = newFibNum(1)
 	idx := 0
 
 	for i := 0; i < fg.maxIterations; i = i + 1 {
-		out <- CloneFibNum(v[idx])
-		v[idx].Add(v[0], v[1])
+		out <- cloneFibNum(v[idx])
+		v[idx].add(v[0], v[1])
 		if idx == 0 {
 			idx = 1
 		} else {
@@ -72,7 +80,7 @@ func (fg *FibonacciGenerator) fibonacci(out chan<- FibNum) {
 	close(out)
 }
 
-func handleUnsupportedMethod(res http.ResponseWriter, req *http.Request) {
+func respondToUnsupportedMethod(res http.ResponseWriter, req *http.Request) {
 	http.Error(res, fmt.Sprintf("%q unsupported", req.Method), http.StatusMethodNotAllowed)
 	log.Print(req)
 }
@@ -102,7 +110,7 @@ func handleFibonacciRequest(res http.ResponseWriter, req *http.Request) {
 		}
 
 		nums := make(chan FibNum)
-		go fg.fibonacci(nums)
+		go fg.Fibonacci(nums)
 		var output bytes.Buffer
 		output.WriteString("[")
 		first := true
@@ -121,7 +129,7 @@ func handleFibonacciRequest(res http.ResponseWriter, req *http.Request) {
 			log.Printf("Error (%q) while writing response for %q", err, req.Host)
 		}
 	} else {
-		handleUnsupportedMethod(res, req)
+		respondToUnsupportedMethod(res, req)
 	}
 }
 

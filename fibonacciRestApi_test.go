@@ -29,7 +29,7 @@ func TestFibonacciNumberOfValuesGenerated(t *testing.T) {
 		}
 
 		result_chan := make(chan FibNum)
-		go fg.fibonacci(result_chan)
+		go fg.Fibonacci(result_chan)
 
 		cnt := 0
 		for dont_care := range result_chan {
@@ -54,7 +54,7 @@ func TestFibonacciVerifyCorrectOutputAgainstInt(t *testing.T) {
 		}
 
 		result_chan := make(chan FibNum)
-		go fg.fibonacci(result_chan)
+		go fg.Fibonacci(result_chan)
 
 		cnt := 0
 		x, y := 0, 1
@@ -72,7 +72,7 @@ func TestFibonacciVerifyCorrectOutputAgainstInt(t *testing.T) {
 	}
 }
 
-func TestValidPostRequestResultsInSuccess(t *testing.T) {
+func TestHandlerValidPostRequestResultsInSuccess(t *testing.T) {
 	req, err := http.NewRequest("POST", "http://example.com/fibonacci",
 		strings.NewReader("n=10"))
 	if err != nil {
@@ -88,7 +88,7 @@ func TestValidPostRequestResultsInSuccess(t *testing.T) {
 	}
 }
 
-func TestPostWithNoBodyResponseFailure(t *testing.T) {
+func TestHandlerPostWithNoBodyResponseFailure(t *testing.T) {
 	req, err := http.NewRequest("POST", "http://example.com/fibonacci", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -108,7 +108,6 @@ func TestFibonacciHandler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; param=value")
 
 	res := httptest.NewRecorder()
@@ -117,5 +116,7 @@ func TestFibonacciHandler(t *testing.T) {
 	if res.Code != 200 {
 		t.Errorf("Expect failure from crafted POST command")
 	}
-
+	if res.Body.String() != "[0,1,1,2,3,5,8,13,21,34]" {
+		t.Errorf("Expect first 10 values. Got '%s'", res.Body)
+	}
 }
