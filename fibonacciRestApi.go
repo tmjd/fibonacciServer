@@ -5,20 +5,34 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/big"
 	"net/http"
 	"strconv"
 )
 
 type FibNum struct {
-	value int
+	value big.Int
 }
 
-func (fn *FibNum) Accumlate(in *FibNum) {
-	fn.value = fn.value + in.value
+func NewFibNum(init int64) FibNum {
+	fn := FibNum{}
+	fn.value = *big.NewInt(init)
+	return fn
+}
+
+func CloneFibNum(src FibNum) FibNum {
+	fn := FibNum{}
+	fn.value = *big.NewInt(0)
+	fn.value.Set(&src.value)
+	return fn
+}
+
+func (fn *FibNum) Add(a FibNum, b FibNum) {
+	fn.value.Add(&a.value, &b.value)
 }
 
 func (fn FibNum) String() string {
-	return strconv.Itoa(fn.value)
+	return fn.value.String()
 }
 
 type FibonacciGenerator struct {
@@ -40,14 +54,14 @@ func (fg *FibonacciGenerator) fibonacci(out chan<- FibNum) {
 	if fg.maxIterations == 0 {
 		return
 	}
-	var v [2]int
-	v[0] = 0
-	v[1] = 1
+	var v [2]FibNum
+	v[0] = NewFibNum(0)
+	v[1] = NewFibNum(1)
 	idx := 0
 
 	for i := 0; i < fg.maxIterations; i = i + 1 {
-		out <- FibNum{v[idx]}
-		v[idx] = v[0] + v[1]
+		out <- CloneFibNum(v[idx])
+		v[idx].Add(v[0], v[1])
 		if idx == 0 {
 			idx = 1
 		} else {
@@ -64,19 +78,43 @@ func handleUnsupportedMethod(res http.ResponseWriter, req *http.Request) {
 }
 
 func handleFibonacciRequest(res http.ResponseWriter, req *http.Request) {
-	if req.Method == "GET" {
-		fg, err := NewFibonacciGenerator(5)
+	if req.Method == "POST" {
+
+		if err := req.ParseForm(); err != nil {
+			http.Error(res, err.Error(), http.StatusBadRequest)
+			log.Printf("Bad form parse from request %q", req)
+			return
+		}
+
+		n, err := strconv.Atoi(req.FormValue("n"))
+		if err != nil {
+			http.Error(res, err.Error(), http.StatusBadRequest)
+			log.Printf("Invalid value in form. Expected int but received (%s) in request  %q",
+				req.FormValue("n"), req)
+			return
+		}
+
+		fg, err := NewFibonacciGenerator(n)
 		if err != nil {
 			http.Error(res, err.Error(), http.StatusMethodNotAllowed)
 			log.Printf("FibonacciGenerator reported %q from request %q", err, req)
+			return
 		}
 
 		nums := make(chan FibNum)
 		go fg.fibonacci(nums)
 		var output bytes.Buffer
+		output.WriteString("[")
+		first := true
 		for num := range nums {
+			if first {
+				first = false
+			} else {
+				output.WriteString(",")
+			}
 			output.WriteString(num.String())
 		}
+		output.WriteString("]")
 
 		_, err = res.Write(output.Bytes())
 		if err != nil {
