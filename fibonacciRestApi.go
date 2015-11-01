@@ -138,41 +138,44 @@ type reqStat struct {
 	iterations int
 }
 
+func (rs reqStat) String() string {
+	return fmt.Sprintf("n=%d-%s", rs.iterations, rs.duration)
+}
+
 type FibonacciRequestHandler struct {
 	activeReq chan int
 	reqStats  chan reqStat
 }
 
-func statChanged(cur int64, reported int64) bool {
-
-	return true
-}
-
 type statState struct {
-	max_requests   int
-	max_iterations reqStat
-	max_duration   reqStat
-	min_duration   reqStat
+	max_concurrent_requests int
+	requests_since_trigger  int
+	max_iterations          reqStat
+	max_duration            reqStat
+	min_duration            reqStat
 }
 
 func (ss *statState) clear() {
-	ss.max_requests = 0
+	ss.max_concurrent_requests = 0
+	ss.requests_since_trigger = 0
 	ss.max_iterations.iterations = 0
 	ss.max_iterations.duration = 0
 	ss.max_duration.iterations = 0
-	ss.max_duration.duration = 0
+	ss.max_duration.duration = time.Since(time.Now())
 	ss.min_duration.iterations = 0
-	ss.min_duration.duration = 0
+	ss.min_duration.duration = time.Since(time.Now().AddDate(-1, -1, -1))
+}
+
+func (ss statState) String() string {
+	return fmt.Sprintf("Requests %d Concurrent %d; MaxIterations:%s MinElapse:%s MaxElapse:%s",
+		state.requests_since_trigger, state.max_concurrent_requests, state.max_iterations,
+		state.min_duration, state.max_duration)
 }
 
 func (frh *FibonacciRequestHandler) statsMonitor() {
-	req_since_trigger := 0
-	max_req, cur_req, last_max_req := 0, 0, 0
-	max_iter, last_max_iter := 0, 0
-	max_dur := time.Since(time.Now())
-	last_max_dur := max_dur
-	min_dur := time.Since(time.Now().AddDate(-1, -1, -1))
-	last_min_dur := min_dur
+	var state statState
+	state.clear()
+	cur_req := 0
 
 	printDelay, _ := time.ParseDuration("2s")
 	timeTrigger := time.After(printDelay)
@@ -181,30 +184,29 @@ func (frh *FibonacciRequestHandler) statsMonitor() {
 		case req := <-frh.activeReq:
 			cur_req = cur_req + req
 
-			if cur_req == 1 {
-				req_since_trigger = req_since_trigger + 1
+			if req == 1 {
+				state.requests_since_trigger = state.requests_since_trigger + 1
 			}
 
-			if cur_req > max_req {
-				max_req = cur_req
+			if cur_req > state.max_concurrent_requests {
+				state.max_concurrent_requests = cur_req
 			}
 		case stat := <-frh.reqStats:
-			if max_dur.Nanoseconds() < stat.duration.Nanoseconds() {
-				max_dur = stat.duration
+			if state.max_duration.duration.Nanoseconds() < stat.duration.Nanoseconds() {
+				state.max_duration = stat
 			}
-			if min_dur.Nanoseconds() > stat.duration.Nanoseconds() {
-				min_dur = stat.duration
+			if state.min_duration.duration.Nanoseconds() > stat.duration.Nanoseconds() {
+				state.min_duration = stat
 			}
-			if max_iter < stat.iterations {
-				max_iter = stat.iterations
+			if state.max_iterations.iterations < stat.iterations {
+				state.max_iterations = stat
 			}
 		case <-timeTrigger:
-			if max_req != last_max_req || max_iter != last_max_iter || max_dur != last_max_dur || min_dur != last_min_dur {
-				last_max_req, last_max_iter = max_req, max_iter
-				last_max_dur, last_min_dur = max_dur, min_dur
-				log.Printf("Max concur reqs %d; Max iterations %d; Max duration %s; Min duration %s",
-					max_req, max_iter, max_dur, min_dur)
+			if state.max_concurrent_requests != 0 {
+				log.Printf("Fibonacci stats: %s", state)
 			}
+			state.clear()
+
 			timeTrigger = time.After(printDelay)
 		}
 	}
