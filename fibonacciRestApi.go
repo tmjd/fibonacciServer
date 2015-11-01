@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"github.com/tmjd/fibonacci"
 	"log"
@@ -12,40 +11,39 @@ import (
 	"time"
 )
 
-func respondToUnsupportedMethod(res http.ResponseWriter, req *http.Request) {
-	http.Error(res, fmt.Sprintf("%q unsupported", req.Method), http.StatusMethodNotAllowed)
-	log.Print(req)
-}
-
+// Parses a variable n out of a POST form or query or a GET query value, all other
+// methods will result in an error being returned
 func getIterationCount(req *http.Request) (iterations int, err error) {
 	if req.Method == "POST" {
 		if strings.HasPrefix(req.Header.Get("Content-Type"), "multipart/form-data") {
 			if err := req.ParseMultipartForm(1024); err != nil {
-				log.Printf("Bad multipart form parse from request %q", req)
-				return 0, err
+				return 0, fmt.Errorf("Bad multipart form parse: %s", err)
 			}
 		}
 		if err := req.ParseForm(); err != nil {
-			log.Printf("Bad form parse from request %q", req)
-			return 0, err
+			return 0, fmt.Errorf("Bad form parse: %s", err)
 		}
 
 		n, err := strconv.Atoi(req.FormValue("n"))
 		if err != nil {
-			log.Printf("Invalid value in form. Expected int but received (%s) in request  %q",
-				req.FormValue("n"), req)
-			return 0, err
+			return 0, fmt.Errorf("Bad value(%s) in form: %s", req.FormValue("n"), err)
 		}
 
 		return n, nil
 	} else if req.Method == "GET" {
-		//TODO: fill this out
-		return 0, errors.New("GET is not impemented yet")
+		values := req.URL.Query()
+		n, err := strconv.Atoi(values.Get("n"))
+		if err != nil {
+			return 0, fmt.Errorf("Bad value(%s) in form: %s", values.Get("n"), err)
+		}
+		return n, nil
 	} else {
-		return 0, errors.New(fmt.Sprintf("Method %s not valid", req.Method))
+		return 0, fmt.Errorf("Method %s not valid", req.Method)
 	}
 }
 
+// Pulls FibNum(s) out of the passed in channel until it is closed and returns
+// the byte slice. The output is wrapped in [] and has a comma between each element
 func buildOutput(in <-chan fibonacci.FibNum) []byte {
 	var output bytes.Buffer
 	output.WriteString("[")
@@ -70,11 +68,6 @@ type reqStat struct {
 
 func (rs reqStat) String() string {
 	return fmt.Sprintf("n=%d-%s", rs.iterations, rs.duration)
-}
-
-type FibonacciRequestHandler struct {
-	activeReq chan int
-	reqStats  chan reqStat
 }
 
 type statState struct {
@@ -102,13 +95,32 @@ func (ss statState) String() string {
 		ss.min_duration, ss.max_duration)
 }
 
+// Request handler that will serve up fibonacci numbers. Also comes with a stats
+// monitor that must be ran or the channels for collecting stats will fill
+// and cause the handler to become blocked
+type FibonacciRequestHandler struct {
+	activeReq chan int
+	reqStats  chan reqStat
+}
+
+// These is our dependency injection for testing
+var timeTriggerDelay = time.After
+var statSelectDone = func() {}
+
+func clearInjectionPoints() {
+	timeTriggerDelay = time.After
+	statSelectDone = func() {}
+}
+
+// Periodically prints out the stats over the last 2 seconds if there are or have
+// been any requests handled
 func (frh *FibonacciRequestHandler) statsMonitor() {
 	var state statState
 	state.clear()
 	cur_req := 0
 
 	printDelay, _ := time.ParseDuration("2s")
-	timeTrigger := time.After(printDelay)
+	timeTrigger := timeTriggerDelay(printDelay)
 	for {
 		select {
 		case req := <-frh.activeReq:
@@ -137,11 +149,14 @@ func (frh *FibonacciRequestHandler) statsMonitor() {
 			}
 			state.clear()
 
-			timeTrigger = time.After(printDelay)
+			// Reset the timeTrigger
+			timeTrigger = timeTriggerDelay(printDelay)
 		}
+		statSelectDone() //Injection point for testing
 	}
 }
 
+// Create new fibonacci request handler and setup the channels used for stats collection
 func NewFibonacciRequestHandler() *FibonacciRequestHandler {
 	var frh FibonacciRequestHandler
 	frh.activeReq = make(chan int, 100)
@@ -149,6 +164,13 @@ func NewFibonacciRequestHandler() *FibonacciRequestHandler {
 	return &frh
 }
 
+func respondToUnsupportedMethod(res http.ResponseWriter, req *http.Request) {
+	http.Error(res, fmt.Sprintf("%q unsupported", req.Method), http.StatusMethodNotAllowed)
+	log.Print(req)
+}
+
+// Handler for generating fibonacci numbers, expects a variable n to be set through
+// a POST form or query or a GET query value
 func (frh *FibonacciRequestHandler) FibonacciRequestHandleFunc(res http.ResponseWriter, req *http.Request) {
 	frh.activeReq <- 1
 	start := time.Now()
@@ -193,6 +215,7 @@ func main() {
 	frh := NewFibonacciRequestHandler()
 	sm.HandleFunc("/fibonacci", frh.FibonacciRequestHandleFunc)
 
+	// Must run the stats monitor or the stats channels will fill and block requests
 	go frh.statsMonitor()
 
 	log.Fatal(http.ListenAndServe(":8080", sm))
