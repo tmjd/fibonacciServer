@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 // Custom Number to use generating the fibonacci numbers, can swap out
@@ -85,51 +86,78 @@ func respondToUnsupportedMethod(res http.ResponseWriter, req *http.Request) {
 	log.Print(req)
 }
 
-func handleFibonacciRequest(res http.ResponseWriter, req *http.Request) {
+func getIterationCount(req *http.Request) (iterations int, err error) {
 	if req.Method == "POST" {
-
+		if strings.HasPrefix(req.Header.Get("Content-Type"), "multipart/form-data") {
+			if err := req.ParseMultipartForm(1024); err != nil {
+				log.Printf("Bad multipart form parse from request %q", req)
+				return 0, err
+			}
+		}
 		if err := req.ParseForm(); err != nil {
-			http.Error(res, err.Error(), http.StatusBadRequest)
 			log.Printf("Bad form parse from request %q", req)
-			return
+			return 0, err
 		}
 
 		n, err := strconv.Atoi(req.FormValue("n"))
 		if err != nil {
-			http.Error(res, err.Error(), http.StatusBadRequest)
 			log.Printf("Invalid value in form. Expected int but received (%s) in request  %q",
 				req.FormValue("n"), req)
-			return
+			return 0, err
 		}
 
-		fg, err := NewFibonacciGenerator(n)
-		if err != nil {
-			http.Error(res, err.Error(), http.StatusMethodNotAllowed)
-			log.Printf("FibonacciGenerator reported %q from request %q", err, req)
-			return
-		}
-
-		nums := make(chan FibNum)
-		go fg.Fibonacci(nums)
-		var output bytes.Buffer
-		output.WriteString("[")
-		first := true
-		for num := range nums {
-			if first {
-				first = false
-			} else {
-				output.WriteString(",")
-			}
-			output.WriteString(num.String())
-		}
-		output.WriteString("]")
-
-		_, err = res.Write(output.Bytes())
-		if err != nil {
-			log.Printf("Error (%q) while writing response for %q", err, req.Host)
-		}
+		return n, nil
+	} else if req.Method == "GET" {
+		//TODO: fill this out
+		return 0, errors.New("GET is not impemented yet")
 	} else {
+		return 0, errors.New(fmt.Sprintf("Method %s not valid", req.Method))
+	}
+}
+
+func buildOutput(in <-chan FibNum) []byte {
+	var output bytes.Buffer
+	output.WriteString("[")
+	first := true
+	for num := range in {
+		if first {
+			first = false
+		} else {
+			output.WriteString(",")
+		}
+		output.WriteString(num.String())
+	}
+	output.WriteString("]")
+
+	return output.Bytes()
+}
+
+func handleFibonacciRequest(res http.ResponseWriter, req *http.Request) {
+	if req.Method != "POST" && req.Method != "GET" {
 		respondToUnsupportedMethod(res, req)
+		return
+	}
+
+	n, err := getIterationCount(req)
+	if err != nil {
+		http.Error(res, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	fg, err := NewFibonacciGenerator(n)
+	if err != nil {
+		http.Error(res, err.Error(), http.StatusBadRequest)
+		log.Printf("FibonacciGenerator reported %q from request %q", err, req)
+		return
+	}
+
+	nums := make(chan FibNum)
+	go fg.Fibonacci(nums)
+	output := buildOutput(nums)
+
+	_, err = res.Write(output)
+	if err != nil {
+		log.Printf("Error (%q) while writing response for %q", err, req.Host)
 	}
 }
 
