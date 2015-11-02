@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
 	"github.com/tmjd/fibonacci"
 	"log"
@@ -188,6 +189,7 @@ func (frh *FibonacciRequestHandler) FibonacciRequestHandleFunc(res http.Response
 		frh.reqStats <- stat
 	}()
 
+	// If the path does not match exactly then response with error
 	if req.URL.Path != frh.url_path {
 		msg := fmt.Sprintf("Request path (%s) does not match %s", req.URL.Path, frh.url_path)
 		writeLogMsg("%s, respond with code StatusNotFound", msg)
@@ -223,14 +225,28 @@ func (frh *FibonacciRequestHandler) FibonacciRequestHandleFunc(res http.Response
 	}
 }
 
+var serve_path string
+var port int
+
+func init() {
+	flag.StringVar(&serve_path, "serve_path", "fibonacci",
+		"the path from root that will access the RestAPI")
+	flag.IntVar(&port, "port", 8080, "port where the server will listen")
+}
+
 func main() {
+	flag.Parse()
+
+	serve_path = path.Clean(fmt.Sprintf("/%s", serve_path))
+
+	writeLogMsg("FibonacciServer listening on port %d at path %s", port, serve_path)
 
 	sm := http.NewServeMux()
-	frh := NewFibonacciRequestHandler("/fibonacci")
-	sm.HandleFunc("/fibonacci", frh.FibonacciRequestHandleFunc)
+	frh := NewFibonacciRequestHandler(serve_path)
+	sm.HandleFunc(serve_path, frh.FibonacciRequestHandleFunc)
 
 	// Must run the stats monitor or the stats channels will fill and block requests
 	go frh.statsMonitor()
 
-	log.Fatal(http.ListenAndServe(":8080", sm))
+	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), sm))
 }
