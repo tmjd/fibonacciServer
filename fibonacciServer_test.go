@@ -133,7 +133,7 @@ func TestHandlerValidPostRequestResultsInSuccess(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; param=value")
 
 	res := httptest.NewRecorder()
-	frh := NewFibonacciRequestHandler()
+	frh := NewFibonacciRequestHandler("fibonacci")
 	frh.FibonacciRequestHandleFunc(res, req)
 
 	if res.Code != 200 {
@@ -149,7 +149,7 @@ func TestHandlerPostWithNoBodyResponseFailure(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; param=value")
 
 	res := httptest.NewRecorder()
-	frh := NewFibonacciRequestHandler()
+	frh := NewFibonacciRequestHandler("fibonacci")
 	frh.FibonacciRequestHandleFunc(res, req)
 
 	if res.Code == 200 {
@@ -164,7 +164,7 @@ func TestHandlerWithUnsupportedMethod(t *testing.T) {
 	}
 
 	res := httptest.NewRecorder()
-	frh := NewFibonacciRequestHandler()
+	frh := NewFibonacciRequestHandler("fibonacci")
 	frh.FibonacciRequestHandleFunc(res, req)
 
 	if res.Code == 200 {
@@ -172,30 +172,67 @@ func TestHandlerWithUnsupportedMethod(t *testing.T) {
 	}
 }
 
-func TestFibonacciHandler(t *testing.T) {
-	req, err := http.NewRequest("POST", "http://example.com/fibonacci",
-		strings.NewReader("n=10"))
-	if err != nil {
-		t.Fatal(err)
+func TestFibonacciHandlerCheckPath(t *testing.T) {
+	var test_values = []struct {
+		expected_code int
+		expected_body string
+		expect_log    bool
+		handle_url    string
+		test_url      string
+	}{
+		//code, body,					  handle_url	test_url
+		{200, "[0,1,1,2,3,5,8,13,21,34]", false, "fibonacci", "fibonacci"},
+		{404, "does not match", true, "fibonacci", "fibonacci/extra"},
+		{404, "does not match", true, "fibonacci", "extra"},
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; param=value")
 
-	res := httptest.NewRecorder()
-	frh := NewFibonacciRequestHandler()
-	frh.FibonacciRequestHandleFunc(res, req)
+	defer clearInjectionPoints()
+	logged := false
+	var msg string
+	writeLogMsg = func(format string, v ...interface{}) {
+		msg = fmt.Sprintf(format, v)
+		logged = true
+	}
 
-	if res.Code != 200 {
-		t.Errorf("Expect failure from crafted POST command")
+	for i, test_val := range test_values {
+
+		req, err := http.NewRequest("POST", fmt.Sprintf("http://example.com/%s", test_val.test_url),
+			strings.NewReader("n=10"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded; param=value")
+
+		res := httptest.NewRecorder()
+		frh := NewFibonacciRequestHandler(test_val.handle_url)
+		logged = false
+		frh.FibonacciRequestHandleFunc(res, req)
+
+		if logged {
+			if !test_val.expect_log {
+				t.Errorf("Iteration %d received log msg (%s) when none was expected", i, msg)
+			}
+		} else {
+			if test_val.expect_log {
+				t.Errorf("Iteration %d expected log message but none was written", i)
+			}
+		}
+		if res.Code != test_val.expected_code {
+			t.Errorf("Iteration %d response code expected %q but got %q",
+				res.Code, test_val.expected_code)
+		}
+		if !strings.Contains(res.Body.String(), test_val.expected_body) {
+			t.Errorf("Iteration %d body did not match\nGot\n%s\nExpected\n%s",
+				i, test_val.expected_body, res.Body)
+		}
 	}
-	if res.Body.String() != "[0,1,1,2,3,5,8,13,21,34]" {
-		t.Errorf("Expect first 10 values. Got '%s'", res.Body)
-	}
+
 }
 
 func TestStatsMonitor(t *testing.T) {
 	defer clearInjectionPoints()
 
-	frh := NewFibonacciRequestHandler()
+	frh := NewFibonacciRequestHandler("fibonacci")
 
 	trigger_chan := make(chan time.Time)
 	timeTriggerDelay = func(time.Duration) <-chan time.Time {
@@ -209,7 +246,7 @@ func TestStatsMonitor(t *testing.T) {
 
 	log_chan := make(chan string)
 	logged := false
-	logStats = func(format string, v ...interface{}) {
+	writeLogMsg = func(format string, v ...interface{}) {
 		log_chan <- fmt.Sprintf(format, v)
 		logged = true
 	}

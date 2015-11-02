@@ -6,6 +6,7 @@ import (
 	"github.com/tmjd/fibonacci"
 	"log"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -101,17 +102,18 @@ func (ss statState) String() string {
 type FibonacciRequestHandler struct {
 	activeReq chan int
 	reqStats  chan reqStat
+	url_path  string
 }
 
 // These is our dependency injection for testing
 var timeTriggerDelay = time.After
 var statSelectDone = func() {}
-var logStats = log.Printf
+var writeLogMsg = log.Printf
 
 func clearInjectionPoints() {
 	timeTriggerDelay = time.After
 	statSelectDone = func() {}
-	logStats = log.Printf
+	writeLogMsg = log.Printf
 }
 
 // Periodically prints out the stats over the last 2 seconds if there are or have
@@ -147,7 +149,7 @@ func (frh *FibonacciRequestHandler) statsMonitor() {
 			}
 		case <-timeTrigger:
 			if state.max_concurrent_requests != 0 {
-				logStats("Fibonacci stats: %s", state)
+				writeLogMsg("Fibonacci stats: %s", state)
 			}
 			state.clear()
 			// Immediately set the max to the cur_req
@@ -161,16 +163,17 @@ func (frh *FibonacciRequestHandler) statsMonitor() {
 }
 
 // Create new fibonacci request handler and setup the channels used for stats collection
-func NewFibonacciRequestHandler() *FibonacciRequestHandler {
+func NewFibonacciRequestHandler(url_path string) *FibonacciRequestHandler {
 	var frh FibonacciRequestHandler
 	frh.activeReq = make(chan int, 100)
 	frh.reqStats = make(chan reqStat, 100)
+	frh.url_path = path.Clean("/" + url_path)
 	return &frh
 }
 
 func respondToUnsupportedMethod(res http.ResponseWriter, req *http.Request) {
 	http.Error(res, fmt.Sprintf("%q unsupported", req.Method), http.StatusMethodNotAllowed)
-	log.Print(req)
+	writeLogMsg("%q", req)
 }
 
 // Handler for generating fibonacci numbers, expects a variable n to be set through
@@ -184,6 +187,13 @@ func (frh *FibonacciRequestHandler) FibonacciRequestHandleFunc(res http.Response
 		stat.duration = time.Since(start)
 		frh.reqStats <- stat
 	}()
+
+	if req.URL.Path != frh.url_path {
+		msg := fmt.Sprintf("Request path (%s) does not match %s", req.URL.Path, frh.url_path)
+		writeLogMsg("%s, respond with code StatusNotFound", msg)
+		http.Error(res, msg, http.StatusNotFound)
+		return
+	}
 	if req.Method != "POST" && req.Method != "GET" {
 		respondToUnsupportedMethod(res, req)
 		return
@@ -199,7 +209,7 @@ func (frh *FibonacciRequestHandler) FibonacciRequestHandleFunc(res http.Response
 	fg, err := fibonacci.NewGenerator(n)
 	if err != nil {
 		http.Error(res, err.Error(), http.StatusBadRequest)
-		log.Printf("FibonacciGenerator reported %q from request %q", err, req)
+		writeLogMsg("FibonacciGenerator reported %q from request %q", err, req)
 		return
 	}
 
@@ -209,14 +219,14 @@ func (frh *FibonacciRequestHandler) FibonacciRequestHandleFunc(res http.Response
 
 	_, err = res.Write(output)
 	if err != nil {
-		log.Printf("Error (%q) while writing response for %q", err, req.Host)
+		writeLogMsg("Error (%s) while writing response for %q", err, req.Host)
 	}
 }
 
 func main() {
 
 	sm := http.NewServeMux()
-	frh := NewFibonacciRequestHandler()
+	frh := NewFibonacciRequestHandler("/fibonacci")
 	sm.HandleFunc("/fibonacci", frh.FibonacciRequestHandleFunc)
 
 	// Must run the stats monitor or the stats channels will fill and block requests
